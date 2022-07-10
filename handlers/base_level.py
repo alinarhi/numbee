@@ -11,21 +11,21 @@ import utils
 from bot import dp
 
 from keyboards.inline.choice_buttons import base_mode_choice
-from states import Base
+from states import Level
 from .str_consts import CORRECT_REPLIES, WRONG_REPLIES, UNRECOGNIZED
 
 
-@dp.message_handler(commands="mode", state=Base)
+# @dp.message_handler(commands="mode", state=Base)
 async def choose_mode(message: Message):
     await message.answer(
         "Доступные режимы:\n\nПроизношение: я буду отправлять тебе число, а ты - произносить его в голосовом "
         "сообщении на выбранном языке.\n\nАудирование - я произношу число, а ты пишешь его цифрами.\n\n"
         "Случайный - чередование произношения и аудирования.\n\nВыбирай!",
         reply_markup=base_mode_choice)
-    await Base.SET_MODE.set()
+    await Level.BASE_SET_MODE.set()
 
 
-@dp.callback_query_handler(text_contains="mode", state=Base.SET_MODE)
+@dp.callback_query_handler(text_contains="mode", state=Level.BASE_SET_MODE)
 async def set_mode(call: CallbackQuery, state: FSMContext):
     call_data = call.data.split(":")
     mode = call_data[1]
@@ -38,15 +38,15 @@ async def set_mode(call: CallbackQuery, state: FSMContext):
     await call.message.delete()
 
 
-@dp.message_handler(commands="range", state=Base)
+# @dp.message_handler(commands="range", state=Base)
 async def choose_range(message: Message):
     await message.answer("Введи два неотрицательных числа через пробел: это будет диапазон значений для изучения.\n"
                          + "Второе число должно быть больше! Пример:\n0 100")
     await message.answer("Если захочешь прервать уровень, напиши /stop")
-    await Base.SET_RANGE.set()
+    await Level.BASE_SET_RANGE.set()
 
 
-@dp.message_handler(state=Base.SET_RANGE)
+@dp.message_handler(state=Level.BASE_SET_RANGE)
 async def set_range(message: Message, state: FSMContext):
     users_range = message.text.split()
     if len(users_range) != 2:
@@ -62,7 +62,7 @@ async def set_range(message: Message, state: FSMContext):
             else:
                 await state.update_data(range=[l, r])
                 await message.answer("Поехали!")
-                await Base.PLAY.set()
+                await Level.BASE_START.set()
                 await send_number(message, state)
         except ValueError:
             await message.reply("Похоже, ты ввел не числа. Попробуй еще раз")
@@ -75,12 +75,14 @@ async def send_number(message: Message, state: FSMContext):
     total = data["total"]
     num = random.randint(rng[0], rng[1])
     await state.update_data(num=num)
-    await state.update_data(total=total+1)
+    await state.update_data(total=total + 1)
     if mode == "2":
         mode = str(random.randint(0, 1))
     if mode == "0":
         await message.answer(str(num))
+        await Level.BASE_PRONOUNCING.set()
     if mode == "1":
+        await Level.BASE_LISTENING.set()
         fileid = await db.get_num(str(num), data["lang"])
         if fileid is None:
             file = utils.tts(str(num), data["lang"])
@@ -91,50 +93,64 @@ async def send_number(message: Message, state: FSMContext):
             await message.answer_voice(fileid)
 
 
-@dp.message_handler(state=Base.PLAY, content_types=types.ContentType.VOICE)
+@dp.message_handler(commands="stop", state='*')
+async def stop_level(message: Message, state: FSMContext):
+    level = await state.get_state()
+    data = await state.get_data()
+    if level != None and level != 'Level:NONE':
+        if level != 'Level:ZERO':
+            await message.answer(f"Всего ошибок: {data['mistakes']} из {data['total']}")
+        await Level.NONE.set()
+        logging.info(f"USER: {message.from_user.username} set state: {await state.get_state()}")
+        await message.answer("Уровень завершен!")
+
+
+@dp.message_handler(state=Level.BASE_PRONOUNCING, content_types=types.ContentType.VOICE, commands=None)
 async def check_voice(message: Message, state: FSMContext):
     file = tempfile.NamedTemporaryFile()
     data = await state.get_data()
     num = data["num"]
-    mode = data["mode"]
     mistakes = data["mistakes"]
-    if mode != "1":
-        try:
-            await message.voice.download(destination_file=file.name)
-            text = utils.stt(file, data["lang"])
-            ans = int(text)
-            if ans != num:
-                await message.reply(f"Мне послышалось, что ты произнес {ans}, а надо было {num}. Давай еще раз?")
-                await state.update_data(mistakes=mistakes+1)
-            else:
-                await message.reply(CORRECT_REPLIES[random.randint(0, len(CORRECT_REPLIES) - 1)])
-                await send_number(message, state)
-        except ValueError:
-            await message.reply(UNRECOGNIZED)
-        finally:
-            file.close()
-    else:
-        await message.answer("Тебе нужно было написать число, которое я произнес. Давай еще раз?"
-                             "\nЕсли хочешь закончить уровень, пиши /stop")
+    try:
+        await message.voice.download(destination_file=file.name)
+        text = utils.stt(file, data["lang"])
+        ans = int(text)
+        if ans != num:
+            await message.reply(f"Мне послышалось, что ты произнес {ans}, а надо было {num}. Давай еще раз?")
+            await state.update_data(mistakes=mistakes + 1)
+        else:
+            await message.reply(CORRECT_REPLIES[random.randint(0, len(CORRECT_REPLIES) - 1)])
+            await send_number(message, state)
+    except ValueError:
+        await message.reply(UNRECOGNIZED)
+    finally:
+        file.close()
 
 
-@dp.message_handler(state=Base.PLAY, content_types=types.ContentType.TEXT)
+@dp.message_handler(state=Level.BASE_PRONOUNCING, commands=None)
+async def warn_pronouncing(message: Message):
+    await message.answer("Тебе нужно было произнести число, которое я отправил. Давай еще раз?"
+                         "\nЕсли хочешь закончить уровень, пиши /stop")
+
+
+@dp.message_handler(state=Level.BASE_LISTENING, content_types=types.ContentType.TEXT, commands=None)
 async def check_text(message: Message, state: FSMContext):
     data = await state.get_data()
     num = data["num"]
-    mode = data["mode"]
     mistakes = data["mistakes"]
-    if mode != "0":
-        try:
-            ans = int(message.text)
-            if ans != num:
-                await message.reply(WRONG_REPLIES[random.randint(0, len(WRONG_REPLIES) - 1)])
-                await state.update_data(mistakes=mistakes+1)
-            else:
-                await message.reply(CORRECT_REPLIES[random.randint(0, len(CORRECT_REPLIES) - 1)])
-                await send_number(message, state)
-        except ValueError:
-            await message.answer("Тебе нужно написать число")
-    else:
-        await message.answer("Тебе нужно было произнести число, которое я отправил. Давай еще раз?"
-                             "\nЕсли хочешь закончить уровень, пиши /stop")
+    try:
+        ans = int(message.text)
+        if ans != num:
+            await message.reply(WRONG_REPLIES[random.randint(0, len(WRONG_REPLIES) - 1)])
+            await state.update_data(mistakes=mistakes + 1)
+        else:
+            await message.reply(CORRECT_REPLIES[random.randint(0, len(CORRECT_REPLIES) - 1)])
+            await send_number(message, state)
+    except ValueError:
+        await message.answer("Тебе нужно написать число")
+
+
+@dp.message_handler(state=Level.BASE_LISTENING, commands=None)
+async def warn_listening(message: Message):
+    await message.answer("Тебе нужно было написать число, которое я произнес. Давай еще раз?"
+                         "\nЕсли хочешь закончить уровень, пиши /stop")

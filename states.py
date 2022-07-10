@@ -4,13 +4,10 @@ from aiogram.dispatcher.filters.state import StatesGroup, State
 class Level(StatesGroup):
     NONE = State()
     ZERO = State()
-    ADVANCED = State()
     BASE = State()
-
-
-class Base(StatesGroup):
-    SET_MODE = State()
-    SET_RANGE = State()
-    PLAY = State()
-
-
+    BASE_SET_MODE = State()
+    BASE_SET_RANGE = State()
+    BASE_START = State()
+    BASE_LISTENING = State()
+    BASE_PRONOUNCING = State()
+    ADVANCED = State()

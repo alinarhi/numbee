@@ -39,14 +39,13 @@ async def check_ans(message: Message, state: FSMContext):
     file = tempfile.NamedTemporaryFile()
     data = await state.get_data()
     num = data["num"]
-    mistakes = data["mistakes"]
     try:
         await message.voice.download(destination_file=file.name)
         text = utils.stt(file, data["lang"])
         ans = int(text)
         if ans != num:
             await message.reply(WRONG_REPLIES[random.randint(0, len(WRONG_REPLIES) - 1)])
-            await state.update_data(mistakes=mistakes+1)
+            await state.update_data(mistakes=data["mistakes"]+1)
         else:
             await message.reply(CORRECT_REPLIES[random.randint(0, len(CORRECT_REPLIES) - 1)])
             await send_task(message, state)

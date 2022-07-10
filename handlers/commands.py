@@ -5,7 +5,7 @@ from bot import dp, bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.dispatcher import FSMContext
 from keyboards.inline.choice_buttons import lang_choice, level_choice
-from states import Level, Base
+from states import Level
 from . import base_level, advanced_level
 
 
@@ -29,11 +29,23 @@ async def send_help(message: Message):
 
 Нулевой - для запоминания произношения: ты отправляешь мне числа - я показываю, как их произносить.
 
-Базовый - начинаем практиковаться: я даю тебе задания на произношение или аудирование.
+Базовый - начинаем практиковаться: задания на произношение или аудирование.
 
-Продвинутый - подключаем математику: я говорю тебе арифметический пример (на сложение, умножение или вычитание), а ты произносишь ответ
+Продвинутый - подключаем математику: устно решаем простые арифметические примеры
 """
 )
+
+
+@dp.message_handler(commands="stop", state='*')
+async def stop_level(message: Message, state: FSMContext):
+    level = await state.get_state()
+    data = await state.get_data()
+    if level != None and level != 'Level:NONE':
+        if level != 'Level:ZERO':
+            await message.answer(f"Всего ошибок: {data['mistakes']} из {data['total']}")
+        await Level.NONE.set()
+        logging.info(f"USER: {message.from_user.username} set state: {await state.get_state()}")
+        await message.answer("Уровень завершен!")
 
 
 @dp.message_handler(commands="lang", state=Level.NONE)
@@ -68,8 +80,9 @@ async def set_level(call: CallbackQuery, state: FSMContext):
     await call.answer(cache_time=30)
     await call.message.delete()
     await state.update_data(total=-1)
+    await state.update_data(mistakes=0)
     if (call_data[1]=="1"):
-        await Base.first()
+        await Level.BASE_START.set()
         await base_level.choose_mode(call.message)
     elif (call_data[1]=="0"):
         await Level.ZERO.set()
@@ -79,18 +92,6 @@ async def set_level(call: CallbackQuery, state: FSMContext):
         await advanced_level.send_task(call.message, state)
     st = await state.get_state()
     logging.info(f"USER: {call.from_user.username} set state: {st}")
-
-
-@dp.message_handler(commands="stop", state='*')
-async def stop_level(message: Message, state: FSMContext):
-    level = await state.get_state()
-    data = await state.get_data()
-    if (level!=None):
-        await message.answer("Уровень завершен!")
-        if (level == Base.PLAY or level == Level.ADVANCED):
-            await message.answer(f"Всего ошибок: {data['mistakes']} из {data['total']}")
-        await Level.NONE.set()
-        logging.info(f"USER: {message.from_user.username} set state: {await state.get_state()}")
 
 
 @dp.message_handler(state=Level.NONE)
